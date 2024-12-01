@@ -1,5 +1,5 @@
-opencv-python
-numpy
-tensorflow
-mtcnn
-scipy
+opencv-python>=4.5.0
+numpy>=1.19.0
+keras-facenet>=0.3.5
+scipy>=1.5.0
+mtcnn>=0.1.0

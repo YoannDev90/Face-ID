@@ -3,21 +3,16 @@ import numpy as np
 from keras_facenet import FaceNet
 from scipy.spatial.distance import cosine
 from mtcnn import MTCNN
-from scipy.fftpack import dct
-import os
+import json
+import time
+import hashlib
 
 # Initialisation des modèles
 detector = MTCNN()
 embedder = FaceNet()
 
 def preprocess_image(img):
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-    cl = clahe.apply(l)
-    limg = cv2.merge((cl,a,b))
-    img = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
-    img = cv2.resize(img, (160, 160))  # FaceNet attend des images 160x160
+    img = cv2.resize(img, (160, 160))
     return img
 
 def extract_features(img):
@@ -26,39 +21,18 @@ def extract_features(img):
     embeddings = embedder.embeddings(img)
     return embeddings[0]
 
-def two_step_verification(img1, img2):
-    features1 = extract_features(img1)
-    features2 = extract_features(img2)
-    similarity_cnn = 1 - cosine(features1, features2)
-    
-    dct1 = dct(cv2.cvtColor(img1, cv2.COLOR_BGR2GRAY).flatten())
-    dct2 = dct(cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY).flatten())
-    similarity_dct = 1 - cosine(dct1[:10], dct2[:10])
-    
-    return similarity_cnn > 0.7 and similarity_dct > 0.9  # Ajustez ces seuils selon vos besoins
+def generate_key(features):
+    feature_bytes = features.tobytes()
+    return hashlib.sha256(feature_bytes).hexdigest()[:16]
 
 def capture_from_webcam():
     cap = cv2.VideoCapture(0)
-    while True:
-        ret, frame = cap.read()
-        cv2.imshow('Capture', frame)
-        if cv2.waitKey(1) & 0xFF == ord('c'):
-            cv2.imwrite('temp_capture.jpg', frame)
-            break
+    ret, frame = cap.read()
     cap.release()
-    cv2.destroyAllWindows()
-    return cv2.imread('temp_capture.jpg')
+    return frame
 
-def register_new_face(source='webcam'):
-    if source == 'webcam':
-        img = capture_from_webcam()
-    elif source == 'file':
-        file_path = input("Entrez le chemin du fichier image: ")
-        img = cv2.imread(file_path)
-    else:
-        print("Source non reconnue")
-        return
-
+def register_new_face():
+    img = capture_from_webcam()
     faces = detector.detect_faces(img)
     if len(faces) == 0:
         print("Aucun visage détecté")
@@ -66,46 +40,79 @@ def register_new_face(source='webcam'):
     
     x, y, w, h = faces[0]['box']
     face = img[y:y+h, x:x+w]
-    face = preprocess_image(face)
+    features = extract_features(face)
+    key = generate_key(features)
     
-    cv2.imwrite('authorized_face.jpg', face)
-    print("Nouveau visage autorisé enregistré")
+    name = input("Entrez le nom de la personne : ")
+    
+    user_data = {
+        "features": features.tolist(),
+        "key": key,
+        "name": name
+    }
+    
+    with open('authorized_face.json', 'w') as f:
+        json.dump(user_data, f)
+    
+    print(f"Nouveau visage autorisé enregistré pour {name}")
 
-def authenticate(img_path, authorized_img_path='authorized_face.jpg'):
-    img = cv2.imread(img_path)
-    authorized_img = cv2.imread(authorized_img_path)
+def continuous_authentication():
+    print("Démarrage de l'authentification continue. Appuyez sur 'q' pour quitter.")
+    cap = cv2.VideoCapture(0)
     
-    faces = detector.detect_faces(img)
-    authorized_faces = detector.detect_faces(authorized_img)
+    with open('authorized_face.json', 'r') as f:
+        authorized_data = json.load(f)
+    authorized_features = np.array(authorized_data['features'])
+    authorized_name = authorized_data['name']
     
-    if len(faces) == 0 or len(authorized_faces) == 0:
-        return False
+    while True:
+        ret, frame = cap.read()
+        faces = detector.detect_faces(frame)
+        
+        info_frame = np.zeros((150, 400, 3), dtype=np.uint8)
+        
+        if len(faces) > 0:
+            face = faces[0]
+            x, y, w, h = face['box']
+            face_img = frame[y:y+h, x:x+w]
+            features = extract_features(face_img)
+            similarity = 1 - cosine(features, authorized_features)
+            
+            status = "Autorisé" if similarity > 0.7 else "Non autorisé"
+            color = (0, 255, 0) if status == "Autorisé" else (0, 0, 255)
+            
+            # Dessiner le rectangle autour du visage
+            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
+            
+            # Afficher les informations
+            cv2.putText(info_frame, f"Nom: {authorized_name}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(info_frame, f"Confiance: {face['confidence']:.4f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(info_frame, f"Similarité: {similarity:.4f}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(info_frame, f"Statut: {status}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        else:
+            cv2.putText(info_frame, "Aucun visage détecté", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        
+        cv2.imshow('Face Recognition', frame)
+        cv2.imshow('Info', info_frame)
+        
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
     
-    x, y, w, h = faces[0]['box']
-    face = img[y:y+h, x:x+w]
-    
-    ax, ay, aw, ah = authorized_faces[0]['box']
-    authorized_face = authorized_img[ay:ay+ah, ax:ax+aw]
-    
-    return two_step_verification(face, authorized_face)
+    cap.release()
+    cv2.destroyAllWindows()
 
 def main_menu():
     while True:
         print("\n--- Menu Principal ---")
         print("1. Enregistrer un nouveau visage")
-        print("2. Authentifier")
+        print("2. Authentification continue")
         print("3. Quitter")
         choice = input("Choisissez une option: ")
 
         if choice == '1':
-            source = input("Choisissez la source (webcam/file): ")
-            register_new_face(source)
+            register_new_face()
         elif choice == '2':
-            test_img_path = input("Entrez le chemin de l'image à tester: ")
-            if authenticate(test_img_path):
-                print("Authentification réussie")
-            else:
-                print("Authentification échouée")
+            continuous_authentication()
         elif choice == '3':
             break
         else:
