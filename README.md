@@ -18,7 +18,7 @@ Ce projet implémente un système d'authentification faciale de haute précision
 
 1. Clonez ce dépôt :
 ```bash
-git clone 
+git clone https://github.com/YoannDev90/Face-ID.git
 ```
 
 2. Installez les dépendances :
