@@ -25,9 +25,6 @@ git clone
 ```bash
 pip install -r requirements.txt
 ```
-
-3. Téléchargez le modèle de reconnaissance faciale pré-entraîné et placez-le dans le répertoire du projet sous le nom `recognition_model.h5`.
-
 ## Utilisation
 
 Exécutez le script principal :
