@@ -1,7 +1,6 @@
 import cv2
 import numpy as np
-from tensorflow.keras.models import load_model
-from tensorflow.keras.preprocessing import image
+from keras_facenet import FaceNet
 from scipy.spatial.distance import cosine
 from mtcnn import MTCNN
 from scipy.fftpack import dct
@@ -9,7 +8,7 @@ import os
 
 # Initialisation des modèles
 detector = MTCNN()
-face_model = load_model('recognition_model.h5')
+embedder = FaceNet()
 
 def preprocess_image(img):
     lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
@@ -18,15 +17,14 @@ def preprocess_image(img):
     cl = clahe.apply(l)
     limg = cv2.merge((cl,a,b))
     img = cv2.cvtColor(limg, cv2.COLOR_LAB2BGR)
-    img = cv2.resize(img, (224, 224))
+    img = cv2.resize(img, (160, 160))  # FaceNet attend des images 160x160
     return img
 
 def extract_features(img):
     img = preprocess_image(img)
-    img = image.img_to_array(img)
     img = np.expand_dims(img, axis=0)
-    features = face_model.predict(img)
-    return features.flatten()
+    embeddings = embedder.embeddings(img)
+    return embeddings[0]
 
 def two_step_verification(img1, img2):
     features1 = extract_features(img1)
@@ -37,7 +35,7 @@ def two_step_verification(img1, img2):
     dct2 = dct(cv2.cvtColor(img2, cv2.COLOR_BGR2GRAY).flatten())
     similarity_dct = 1 - cosine(dct1[:10], dct2[:10])
     
-    return similarity_cnn > 0.85 and similarity_dct > 0.9
+    return similarity_cnn > 0.7 and similarity_dct > 0.9  # Ajustez ces seuils selon vos besoins
 
 def capture_from_webcam():
     cap = cv2.VideoCapture(0)
@@ -90,17 +88,6 @@ def authenticate(img_path, authorized_img_path='authorized_face.jpg'):
     authorized_face = authorized_img[ay:ay+ah, ax:ax+aw]
     
     return two_step_verification(face, authorized_face)
-
-def update_model(new_image_path):
-    img = cv2.imread(new_image_path)
-    faces = detector.detect_faces(img)
-    if len(faces) > 0:
-        x, y, w, h = faces[0]['box']
-        face = img[y:y+h, x:x+w]
-        face = preprocess_image(face)
-        face = image.img_to_array(face)
-        face = np.expand_dims(face, axis=0)
-        face_model.fit(face, np.array([1]), epochs=1, verbose=0)
 
 def main_menu():
     while True:
